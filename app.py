@@ -2,30 +2,21 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# MODULES
 import auth
 import group
 import payment
 import model
 import admin
 
-# -----------------------
-# INIT DATABASE
-# -----------------------
+# INIT
 auth.create_users_table()
 auth.create_default_admin()
 group.create_group_tables()
 payment.create_contribution_table()
 
-# -----------------------
-# SESSION STATE
-# -----------------------
 if "user" not in st.session_state:
     st.session_state["user"] = None
 
-# -----------------------
-# SIDEBAR MENU
-# -----------------------
 menu = ["Login", "Register"]
 choice = st.sidebar.selectbox("Menu", menu)
 
@@ -33,214 +24,134 @@ choice = st.sidebar.selectbox("Menu", menu)
 # REGISTER
 # -----------------------
 if choice == "Register":
-    st.title("📝 Register")
+    st.title("Register")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Create Account"):
-        success, msg = auth.register_user(username, password)
-        if success:
-            st.success(msg)
-        else:
-            st.error(msg)
+    if st.button("Register"):
+        success, msg = auth.register_user(u, p)
+        st.success(msg) if success else st.error(msg)
 
 # -----------------------
 # LOGIN
 # -----------------------
 elif choice == "Login":
-    st.title("🔐 Login")
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    st.title("Login")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if auth.login_user(username, password):
-            st.session_state["user"] = username
-            st.success(f"Welcome {username}")
+        if auth.login_user(u, p):
+            st.session_state["user"] = u
             st.rerun()
         else:
-            st.error("Invalid username or password")
+            st.error("Invalid")
 
 # -----------------------
-# MAIN APP
+# MAIN
 # -----------------------
 if st.session_state["user"]:
 
     user = st.session_state["user"]
 
-    st.title("📊 Equb Smart System")
-    st.write(f"👤 Logged in as: **{user}**")
+    st.title("Equb Smart System")
+    st.write(f"User: {user}")
 
-    # =======================
+    # -----------------------
     # CREATE GROUP
-    # =======================
-    st.sidebar.subheader("🏦 Create Equb Group")
+    # -----------------------
+    st.sidebar.subheader("Create Group")
 
-    new_group = st.sidebar.text_input("Group Name")
+    gname = st.sidebar.text_input("Group Name")
+    members_input = st.sidebar.text_area("Members (comma separated)")
 
-    members_input = st.sidebar.text_area(
-        "Members (comma separated)",
-        placeholder="e.g. Kidane, Abel, Sara"
-    )
+    if st.sidebar.button("Create"):
+        members = [m.strip() for m in members_input.split(",") if m.strip()]
+        success, msg = group.create_group(gname, user, members)
+        st.sidebar.success(msg) if success else st.sidebar.error(msg)
+        st.rerun()
 
-    if st.sidebar.button("Create Group"):
+    # -----------------------
+    # GROUP ACCESS
+    # -----------------------
+    user_groups = group.get_user_groups(user)
 
-        members_list = [m.strip() for m in members_input.split(",") if m.strip()]
+    if not user_groups:
+        st.info("No group yet")
+        st.stop()
 
-        success, msg = group.create_group(new_group, user, members_list)
+    gdict = {f"{g[1]} (ID {g[0]})": g[0] for g in user_groups}
+    selected = st.sidebar.selectbox("Select Group", list(gdict.keys()))
+    gid = gdict[selected]
 
-        if success:
-            st.sidebar.success(msg)
+    st.header(selected)
+
+    members = group.get_group_members(gid)
+    st.write("Members:", members)
+
+    # -----------------------
+    # CYCLE INFO
+    # -----------------------
+    cycle = group.get_cycle(gid)
+    st.subheader(f"🔄 Cycle: {cycle}")
+
+    eligible = group.get_eligible_members(gid)
+    st.write("Eligible:", eligible)
+
+    # -----------------------
+    # PAYMENT
+    # -----------------------
+    amount = st.number_input("Amount", min_value=0.0)
+
+    if st.button("Pay"):
+        if user not in members:
+            st.error("Not member")
+        else:
+            success, msg = payment.save_payment(user, gid, amount)
+            st.success(msg) if success else st.error(msg)
+
+    # -----------------------
+    # TOTAL
+    # -----------------------
+    total = payment.get_group_total(gid)
+    st.write("Total:", total)
+
+    # -----------------------
+    # DRAW (NO REPEAT WINNER)
+    # -----------------------
+    if eligible:
+
+        probs = np.ones(len(eligible)) / len(eligible)
+
+        if st.button("🎲 Draw Winner"):
+            winner = np.random.choice(eligible, p=probs)
+
+            group.save_winner(gid, winner)
+
+            st.success(f"Winner: {winner}")
+
+            # Check cycle reset
+            if group.check_cycle_reset(gid):
+                st.info("🔁 New cycle started!")
+
             st.rerun()
-        else:
-            st.sidebar.warning(msg)
-
-    # =======================
-    # LOAD GROUPS
-    # =======================
-    all_groups = group.get_groups()
-
-    group_id = None
-    selected_group = None
-
-    if all_groups:
-        group_dict = {
-            f"{g[1]} (ID {g[0]})": g[0] for g in all_groups
-        }
-
-        selected_group = st.sidebar.selectbox(
-            "Select Group", list(group_dict.keys())
-        )
-
-        group_id = group_dict[selected_group]
-
-    # =======================
-    # GROUP DASHBOARD
-    # =======================
-    if group_id:
-
-        st.header(f"🏦 {selected_group}")
-
-        members = group.get_group_members(group_id)
-
-        st.subheader("👥 Members")
-
-        if members:
-            st.write(members)
-        else:
-            st.warning("No members yet")
-
-        st.write(f"Total Members: {len(members)}")
-
-        # -----------------------
-        # CONTRIBUTION
-        # -----------------------
-        st.subheader("💳 Contribution")
-
-        amount = st.number_input("Enter Amount", min_value=0.0)
-
-        if st.button("Pay"):
-
-            # 🔒 CHECK MEMBERSHIP
-            if user not in members:
-                st.error("❌ You are not a member of this group")
-            else:
-                success, msg = payment.save_payment(user, group_id, amount)
-                if success:
-                    st.success(msg)
-                else:
-                    st.warning(msg)
-
-        # -----------------------
-        # LOAD DATA (SAFE)
-        # -----------------------
-        try:
-            data = payment.get_group_payments(group_id)
-        except Exception:
-            data = []
-
-        df = pd.DataFrame(
-            data,
-            columns=["User", "Group", "Amount", "Status", "Time"]
-        )
-
-        st.subheader("📋 Contributions")
-
-        if df.empty:
-            st.info("No contributions yet")
-        else:
-            st.dataframe(df)
-
-        # -----------------------
-        # TOTAL POOL
-        # -----------------------
-        try:
-            total = payment.get_group_total(group_id)
-        except Exception:
-            total = 0
-
-        st.write(f"💰 Total Pool: **{total}**")
-
-        # -----------------------
-        # MODEL
-        # -----------------------
-        if len(members) > 0:
-
-            members_array = np.array(members)
-
-            weights = model.compute_weights(len(members_array))
-            probs = model.compute_probabilities(weights)
-
-            st.subheader("📈 Probabilities")
-
-            prob_df = pd.DataFrame({
-                "Member": members_array,
-                "Probability": probs
-            })
-
-            st.dataframe(prob_df)
-            st.bar_chart(prob_df.set_index("Member"))
-
-            # -----------------------
-            # EXPECTED REWARD
-            # -----------------------
-            st.subheader("💰 Expected Rewards")
-
-            exp_rewards = model.expected_rewards(probs, total)
-
-            st.write(dict(zip(members_array, exp_rewards)))
-
-            # -----------------------
-            # FAIRNESS
-            # -----------------------
-            st.subheader("⚖️ Fairness")
-
-            fairness = model.fairness_metric(probs)
-            st.write(fairness)
-
-            # -----------------------
-            # DRAW
-            # -----------------------
-            if st.button("🎲 Run Draw"):
-                winner = model.run_draw(members_array, probs)
-                st.success(f"🏆 Winner: {winner}")
 
     else:
-        st.info("👈 Create or select a group")
+        st.warning("All members already received → Resetting cycle soon")
 
-    # =======================
-    # ADMIN PANEL
-    # =======================
-    role = auth.get_user_role(user)
+    # -----------------------
+    # DATA
+    # -----------------------
+    data = payment.get_group_payments(gid)
+    df = pd.DataFrame(data, columns=["User", "Group", "Amount", "Status", "Time"])
+    st.dataframe(df)
 
-    if role == "admin":
-        st.subheader("🛠️ Admin Panel")
+    # -----------------------
+    # ADMIN
+    # -----------------------
+    if auth.get_user_role(user) == "admin":
         admin.admin_panel()
 
-    # -----------------------
-    # LOGOUT
-    # -----------------------
     if st.sidebar.button("Logout"):
         st.session_state["user"] = None
         st.rerun()
