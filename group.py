@@ -4,9 +4,11 @@ conn = sqlite3.connect("equb.db", check_same_thread=False)
 c = conn.cursor()
 
 # -----------------------
-# CREATE TABLES
+# CREATE TABLES + MIGRATION
 # -----------------------
 def create_group_tables():
+
+    # CREATE TABLE (if new)
     c.execute("""
     CREATE TABLE IF NOT EXISTS groups (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -15,6 +17,12 @@ def create_group_tables():
         cycle_no INTEGER DEFAULT 1
     )
     """)
+
+    # 🔥 MIGRATION FIX (VERY IMPORTANT)
+    try:
+        c.execute("ALTER TABLE groups ADD COLUMN cycle_no INTEGER DEFAULT 1")
+    except:
+        pass  # already exists
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS group_members (
@@ -43,26 +51,26 @@ def create_group(name, owner, members):
         return False, "Group name required"
 
     c.execute(
-        "INSERT INTO groups (name, owner) VALUES (?, ?)",
+        "INSERT INTO groups (name, owner, cycle_no) VALUES (?, ?, 1)",
         (name, owner)
     )
     gid = c.lastrowid
 
-    # add owner + members
+    # ensure owner included
     all_members = list(set(members + [owner]))
 
     for m in all_members:
         c.execute(
-            "INSERT OR IGNORE INTO group_members VALUES (?, ?)",
+            "INSERT OR IGNORE INTO group_members (group_id, username) VALUES (?, ?)",
             (gid, m)
         )
 
     conn.commit()
-    return True, f"Group '{name}' created"
+    return True, f"Group '{name}' created successfully"
 
 
 # -----------------------
-# GET USER GROUPS ONLY
+# GET USER GROUPS
 # -----------------------
 def get_user_groups(username):
     return c.execute("""
@@ -74,7 +82,7 @@ def get_user_groups(username):
 
 
 # -----------------------
-# MEMBERS
+# GET MEMBERS
 # -----------------------
 def get_group_members(group_id):
     rows = c.execute(
@@ -85,26 +93,32 @@ def get_group_members(group_id):
 
 
 # -----------------------
-# CYCLE
+# SAFE GET CYCLE
 # -----------------------
 def get_cycle(group_id):
-    result = c.execute(
-        "SELECT cycle_no FROM groups WHERE id=?",
-        (group_id,)
-    ).fetchone()
+    try:
+        result = c.execute(
+            "SELECT cycle_no FROM groups WHERE id=?",
+            (group_id,)
+        ).fetchone()
 
-    if result:
-        return result[0]
-    return 1
+        if result and result[0] is not None:
+            return result[0]
+
+        return 1
+
+    except Exception as e:
+        print("Cycle error:", e)
+        return 1
 
 
 # -----------------------
-# ELIGIBLE MEMBERS (NO REPEAT)
+# ELIGIBLE MEMBERS
 # -----------------------
 def get_eligible_members(group_id):
     cycle = get_cycle(group_id)
 
-    all_members = get_group_members(group_id)
+    members = get_group_members(group_id)
 
     winners = c.execute("""
         SELECT username FROM winners
@@ -113,7 +127,7 @@ def get_eligible_members(group_id):
 
     winners = [w[0] for w in winners]
 
-    return [m for m in all_members if m not in winners]
+    return [m for m in members if m not in winners]
 
 
 # -----------------------
@@ -131,13 +145,13 @@ def save_winner(group_id, username):
 
 
 # -----------------------
-# RESET CYCLE IF COMPLETE
+# RESET CYCLE
 # -----------------------
 def check_cycle_reset(group_id):
     members = get_group_members(group_id)
     eligible = get_eligible_members(group_id)
 
-    if len(eligible) == 0:
+    if len(members) > 0 and len(eligible) == 0:
         c.execute("""
             UPDATE groups
             SET cycle_no = cycle_no + 1
