@@ -7,6 +7,7 @@ def create_contribution_table():
     c.execute("""
     CREATE TABLE IF NOT EXISTS contributions (
         user TEXT,
+        group_id INTEGER,
         amount REAL,
         status TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -14,10 +15,10 @@ def create_contribution_table():
     """)
     conn.commit()
 
-def save_payment(user, amount):
-    c.execute("INSERT INTO contributions VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-              (user, amount, "paid"))
+def save_payment(user, group_id, amount):
+    c.execute("INSERT INTO contributions VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
+              (user, group_id, amount, "paid"))
     conn.commit()
 
-def get_all_payments():
-    return c.execute("SELECT * FROM contributions").fetchall()
+def get_group_payments(group_id):
+    return c.execute("SELECT * FROM contributions WHERE group_id=?", (group_id,)).fetchall()
