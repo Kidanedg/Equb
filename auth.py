@@ -20,38 +20,68 @@ def create_users_table():
     """)
     conn.commit()
 
+
+# -----------------------
+# PASSWORD VALIDATION
+# -----------------------
+def validate_password(password):
+    if len(password) < 4:
+        return False, "Password must be at least 4 characters"
+    return True, ""
+
+
 # -----------------------
 # REGISTER USER
 # -----------------------
 def register_user(username, password, role="user"):
+
     if not username or not password:
         return False, "Username and password required"
 
-    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+    valid, msg = validate_password(password)
+    if not valid:
+        return False, msg
+
+    if user_exists(username):
+        return False, "Username already exists"
 
     try:
-        c.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            (username, hashed, role)
-        )
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+
+        c.execute("""
+        INSERT INTO users (username, password, role)
+        VALUES (?, ?, ?)
+        """, (username.strip(), hashed, role))
+
         conn.commit()
         return True, "User registered successfully"
 
-    except sqlite3.IntegrityError:
-        return False, "Username already exists"
+    except Exception as e:
+        return False, str(e)
+
 
 # -----------------------
 # LOGIN USER
 # -----------------------
 def login_user(username, password):
+
+    if not username or not password:
+        return False
+
     c.execute("SELECT password FROM users WHERE username=?", (username,))
     result = c.fetchone()
 
     if result:
         stored_password = result[0]
-        if bcrypt.checkpw(password.encode(), stored_password):
-            return True
+
+        try:
+            if bcrypt.checkpw(password.encode(), stored_password):
+                return True
+        except:
+            return False
+
     return False
+
 
 # -----------------------
 # GET USER ROLE
@@ -61,53 +91,100 @@ def get_user_role(username):
     result = c.fetchone()
     return result[0] if result else None
 
+
 # -----------------------
-# SET USER ROLE (ADMIN USE)
+# SET USER ROLE (ADMIN)
 # -----------------------
 def set_user_role(username, role):
-    c.execute("UPDATE users SET role=? WHERE username=?", (role, username))
-    conn.commit()
+
+    if role not in ["user", "admin"]:
+        return False, "Invalid role"
+
+    try:
+        c.execute("""
+        UPDATE users SET role=? WHERE username=?
+        """, (role, username))
+        conn.commit()
+        return True, "Role updated"
+    except Exception as e:
+        return False, str(e)
+
 
 # -----------------------
 # GET ALL USERS
 # -----------------------
 def get_all_users():
-    c.execute("SELECT username, role FROM users")
-    return c.fetchall()
+    return c.execute("""
+    SELECT username, role FROM users
+    ORDER BY username
+    """).fetchall()
+
 
 # -----------------------
-# DELETE USER (ADMIN)
+# DELETE USER (SAFE)
 # -----------------------
-def delete_user(username):
-    c.execute("DELETE FROM users WHERE username=?", (username,))
-    conn.commit()
+def delete_user(username, current_user=None):
+
+    # Prevent deleting yourself
+    if username == current_user:
+        return False, "You cannot delete yourself"
+
+    try:
+        c.execute("DELETE FROM users WHERE username=?", (username,))
+        conn.commit()
+        return True, "User deleted"
+    except Exception as e:
+        return False, str(e)
+
 
 # -----------------------
-# CHECK IF USER EXISTS
+# CHECK USER EXISTS
 # -----------------------
 def user_exists(username):
-    c.execute("SELECT 1 FROM users WHERE username=?", (username,))
-    return c.fetchone() is not None
+    result = c.execute(
+        "SELECT 1 FROM users WHERE username=?",
+        (username,)
+    ).fetchone()
+
+    return result is not None
+
 
 # -----------------------
-# CREATE DEFAULT ADMIN (RUN ONCE)
+# CREATE DEFAULT ADMIN
 # -----------------------
 def create_default_admin():
+
     if not user_exists("admin"):
+
         hashed = bcrypt.hashpw("admin123".encode(), bcrypt.gensalt())
-        c.execute(
-            "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
-            ("admin", hashed, "admin")
-        )
+
+        c.execute("""
+        INSERT INTO users (username, password, role)
+        VALUES (?, ?, ?)
+        """, ("admin", hashed, "admin"))
+
         conn.commit()
+
 
 # -----------------------
 # CHANGE PASSWORD
 # -----------------------
 def change_password(username, new_password):
-    hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
-    c.execute(
-        "UPDATE users SET password=? WHERE username=?",
-        (hashed, username)
-    )
-    conn.commit()
+
+    valid, msg = validate_password(new_password)
+    if not valid:
+        return False, msg
+
+    try:
+        hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
+
+        c.execute("""
+        UPDATE users SET password=?
+        WHERE username=?
+        """, (hashed, username))
+
+        conn.commit()
+        return True, "Password updated"
+
+    except Exception as e:
+        return False, str(e)
