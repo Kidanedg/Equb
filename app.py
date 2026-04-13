@@ -1,225 +1,210 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-
-# MODULES
-import auth
-import group
-import payment
-import model
-import admin
+import sqlite3
 
 # -----------------------
-# INIT SYSTEM
+# DATABASE CONNECTION
 # -----------------------
-auth.create_users_table()
-auth.create_default_admin()
-group.create_group_tables()
-payment.create_contribution_table()
+conn = sqlite3.connect("equb.db", check_same_thread=False)
+c = conn.cursor()
 
 # -----------------------
-# SESSION STATE
+# CREATE TABLES
 # -----------------------
-if "user" not in st.session_state:
-    st.session_state["user"] = None
+def create_group_tables():
 
-# -----------------------
-# SIDEBAR MENU
-# -----------------------
-menu = ["Login", "Register"]
-choice = st.sidebar.selectbox("Menu", menu)
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS groups (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        owner TEXT NOT NULL
+    )
+    """)
 
-# -----------------------
-# REGISTER
-# -----------------------
-if choice == "Register":
-    st.subheader("📝 Register")
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS group_members (
+        group_id INTEGER,
+        username TEXT,
+        UNIQUE(group_id, username)
+    )
+    """)
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Create Account"):
-        success, msg = auth.register_user(username, password)
-        if success:
-            st.success(msg)
-        else:
-            st.error(msg)
+    conn.commit()
 
 # -----------------------
-# LOGIN
+# CREATE GROUP
 # -----------------------
-elif choice == "Login":
-    st.subheader("🔐 Login")
+def create_group(name, owner):
 
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
+    if not name or not owner:
+        return False, "Group name and owner required"
 
-    if st.button("Login"):
-        if auth.login_user(username, password):
-            st.session_state["user"] = username
-            st.success(f"Welcome {username}")
-        else:
-            st.error("Invalid credentials")
-
-# -----------------------
-# MAIN APP
-# -----------------------
-if st.session_state["user"]:
-
-    user = st.session_state["user"]
-
-    st.title("📊 Equb Smart System")
-    st.write(f"👤 Logged in as: **{user}**")
-
-    # =======================
-    # GROUP MANAGEMENT
-    # =======================
-    st.sidebar.subheader("🏦 Equb Groups")
-
-    new_group = st.sidebar.text_input("New Group Name")
-
-    if st.sidebar.button("Create Group"):
-        success, msg = group.create_group(new_group, user)
-        if success:
-            st.sidebar.success(msg)
-        else:
-            st.sidebar.warning(msg)
-
-    all_groups = group.get_groups()
-
-    group_id = None
-
-    if all_groups:
-        group_dict = {
-            f"{g[1]} (ID {g[0]})": g[0] for g in all_groups
-        }
-
-        selected_group = st.sidebar.selectbox(
-            "Select Group", list(group_dict.keys())
+    try:
+        c.execute(
+            "INSERT INTO groups (name, owner) VALUES (?, ?)",
+            (name.strip(), owner.strip())
         )
 
-        group_id = group_dict[selected_group]
+        group_id = c.lastrowid
 
-        if st.sidebar.button("Join Group"):
-            success, msg = group.join_group(group_id, user)
-            if success:
-                st.sidebar.success(msg)
-            else:
-                st.sidebar.warning(msg)
+        # Add owner as member
+        c.execute("""
+        INSERT OR IGNORE INTO group_members (group_id, username)
+        VALUES (?, ?)
+        """, (group_id, owner))
 
-    # =======================
-    # GROUP DASHBOARD
-    # =======================
-    if group_id:
+        conn.commit()
+        return True, f"Group '{name}' created"
 
-        st.header(f"🏦 {selected_group}")
+    except Exception as e:
+        return False, str(e)
 
-        # -----------------------
-        # MEMBERS
-        # -----------------------
-        members = group.get_group_members(group_id)
+# -----------------------
+# GET ALL GROUPS
+# -----------------------
+def get_groups():
+    try:
+        return c.execute("""
+            SELECT id, name, owner
+            FROM groups
+            ORDER BY id DESC
+        """).fetchall()
 
-        st.subheader("👥 Members")
-        st.write(members)
+    except Exception as e:
+        print("Error fetching groups:", e)
+        return []
 
-        # -----------------------
-        # CONTRIBUTION
-        # -----------------------
-        st.subheader("💳 Contribution")
+# -----------------------
+# JOIN GROUP
+# -----------------------
+def join_group(group_id, username):
 
-        amount = st.number_input("Enter Amount", min_value=0.0)
+    if not group_id or not username:
+        return False, "Invalid group or username"
 
-        if st.button("Pay"):
-            success, msg = payment.save_payment(user, group_id, amount)
-            if success:
-                st.success(msg)
-            else:
-                st.warning(msg)
+    # Prevent duplicate join
+    existing = c.execute(
+        "SELECT 1 FROM group_members WHERE group_id=? AND username=?",
+        (group_id, username)
+    ).fetchone()
 
-        # -----------------------
-        # LOAD DATA
-        # -----------------------
-        data = payment.get_group_payments(group_id)
+    if existing:
+        return False, "User already in group"
 
-        df = pd.DataFrame(
-            data,
-            columns=["User", "Group", "Amount", "Status", "Time"]
+    try:
+        c.execute(
+            "INSERT INTO group_members (group_id, username) VALUES (?, ?)",
+            (group_id, username)
         )
+        conn.commit()
+        return True, "Joined group successfully"
 
-        st.subheader("📋 Contributions")
+    except Exception as e:
+        return False, str(e)
 
-        if df.empty:
-            st.info("No contributions yet")
-        else:
-            st.dataframe(df)
+# -----------------------
+# LEAVE GROUP
+# -----------------------
+def leave_group(group_id, username):
 
-        # -----------------------
-        # TOTAL
-        # -----------------------
-        total = payment.get_group_total(group_id)
-        st.write(f"💰 Total Pool: **{total}**")
+    try:
+        c.execute(
+            "DELETE FROM group_members WHERE group_id=? AND username=?",
+            (group_id, username)
+        )
+        conn.commit()
+        return True, "Left group"
 
-        # -----------------------
-        # MATHEMATICAL MODEL
-        # -----------------------
-        if len(members) > 0:
+    except Exception as e:
+        return False, str(e)
 
-            members_array = np.array(members)
+# -----------------------
+# DELETE GROUP (OWNER ONLY)
+# -----------------------
+def delete_group(group_id, username):
 
-            weights = model.compute_weights(len(members_array))
-            probs = model.compute_probabilities(weights)
+    owner = c.execute(
+        "SELECT owner FROM groups WHERE id=?",
+        (group_id,)
+    ).fetchone()
 
-            # -----------------------
-            # PROBABILITIES
-            # -----------------------
-            st.subheader("📈 Probabilities")
+    if not owner:
+        return False, "Group not found"
 
-            prob_df = pd.DataFrame({
-                "Member": members_array,
-                "Probability": probs
-            })
+    if owner[0] != username:
+        return False, "Only owner can delete group"
 
-            st.dataframe(prob_df)
-            st.bar_chart(prob_df.set_index("Member"))
+    try:
+        c.execute("DELETE FROM groups WHERE id=?", (group_id,))
+        c.execute("DELETE FROM group_members WHERE group_id=?", (group_id,))
+        conn.commit()
+        return True, "Group deleted"
 
-            # -----------------------
-            # EXPECTED REWARD
-            # -----------------------
-            st.subheader("💰 Expected Rewards")
+    except Exception as e:
+        return False, str(e)
 
-            exp = model.expected_rewards(probs, total)
-            st.write(dict(zip(members_array, exp)))
+# -----------------------
+# GET GROUP MEMBERS
+# -----------------------
+def get_group_members(group_id):
 
-            # -----------------------
-            # FAIRNESS
-            # -----------------------
-            st.subheader("⚖️ Fairness")
+    try:
+        members = c.execute(
+            "SELECT username FROM group_members WHERE group_id=?",
+            (group_id,)
+        ).fetchall()
 
-            fairness = model.fairness_metric(probs)
-            st.write(fairness)
+        return [m[0] for m in members]
 
-            # -----------------------
-            # DRAW
-            # -----------------------
-            if st.button("🎲 Run Draw"):
-                winner = model.run_draw(members_array, probs)
-                st.success(f"🏆 Winner: {winner}")
+    except Exception as e:
+        print("Error fetching members:", e)
+        return []
 
-    else:
-        st.info("👈 Create or select a group")
+# -----------------------
+# GET USER GROUPS
+# -----------------------
+def get_user_groups(username):
 
-    # =======================
-    # ADMIN PANEL
-    # =======================
-    role = auth.get_user_role(user)
+    try:
+        return c.execute("""
+            SELECT g.id, g.name
+            FROM groups g
+            JOIN group_members gm ON g.id = gm.group_id
+            WHERE gm.username=?
+        """, (username,)).fetchall()
 
-    if role == "admin":
-        st.subheader("🛠️ Admin Panel")
-        admin.admin_panel()
+    except Exception as e:
+        print("Error fetching user groups:", e)
+        return []
 
-    # =======================
-    # LOGOUT
-    # =======================
-    if st.sidebar.button("Logout"):
-        st.session_state["user"] = None
-        st.rerun()
+# -----------------------
+# CHECK MEMBERSHIP
+# -----------------------
+def is_member(group_id, username):
+
+    result = c.execute(
+        "SELECT 1 FROM group_members WHERE group_id=? AND username=?",
+        (group_id, username)
+    ).fetchone()
+
+    return result is not None
+
+# -----------------------
+# GET GROUP INFO
+# -----------------------
+def get_group_info(group_id):
+
+    return c.execute(
+        "SELECT id, name, owner FROM groups WHERE id=?",
+        (group_id,)
+    ).fetchone()
+
+# -----------------------
+# COUNT MEMBERS
+# -----------------------
+def count_members(group_id):
+
+    result = c.execute(
+        "SELECT COUNT(*) FROM group_members WHERE group_id=?",
+        (group_id,)
+    ).fetchone()
+
+    return result[0] if result else 0
