@@ -73,20 +73,32 @@ if st.session_state["user"]:
     st.write(f"👤 Logged in as: **{user}**")
 
     # =======================
-    # GROUP MANAGEMENT
+    # CREATE GROUP
     # =======================
-    st.sidebar.subheader("🏦 Equb Groups")
+    st.sidebar.subheader("🏦 Create Equb Group")
 
-    new_group = st.sidebar.text_input("New Group Name")
+    new_group = st.sidebar.text_input("Group Name")
+
+    members_input = st.sidebar.text_area(
+        "Members (comma separated)",
+        placeholder="e.g. Kidane, Abel, Sara"
+    )
 
     if st.sidebar.button("Create Group"):
-        success, msg = group.create_group(new_group, user)
+
+        members_list = [m.strip() for m in members_input.split(",") if m.strip()]
+
+        success, msg = group.create_group(new_group, user, members_list)
+
         if success:
             st.sidebar.success(msg)
+            st.rerun()
         else:
             st.sidebar.warning(msg)
 
+    # =======================
     # LOAD GROUPS
+    # =======================
     all_groups = group.get_groups()
 
     group_id = None
@@ -102,23 +114,6 @@ if st.session_state["user"]:
 
         group_id = group_dict[selected_group]
 
-        # JOIN GROUP
-        if st.sidebar.button("Join Group"):
-            success, msg = group.join_group(group_id, user)
-            if success:
-                st.sidebar.success(msg)
-            else:
-                st.sidebar.warning(msg)
-
-        # LEAVE GROUP
-        if st.sidebar.button("Leave Group"):
-            success, msg = group.leave_group(group_id, user)
-            if success:
-                st.sidebar.success(msg)
-                st.rerun()
-            else:
-                st.sidebar.warning(msg)
-
     # =======================
     # GROUP DASHBOARD
     # =======================
@@ -126,13 +121,10 @@ if st.session_state["user"]:
 
         st.header(f"🏦 {selected_group}")
 
-        # MEMBERS
         members = group.get_group_members(group_id)
 
         st.subheader("👥 Members")
         st.write(members)
-
-        # MEMBER COUNT
         st.write(f"Total Members: {len(members)}")
 
         # -----------------------
@@ -150,7 +142,7 @@ if st.session_state["user"]:
                 st.warning(msg)
 
         # -----------------------
-        # LOAD CONTRIBUTIONS
+        # DATA
         # -----------------------
         data = payment.get_group_payments(group_id)
 
@@ -167,25 +159,21 @@ if st.session_state["user"]:
             st.dataframe(df)
 
         # -----------------------
-        # TOTAL POOL
+        # TOTAL
         # -----------------------
         total = payment.get_group_total(group_id)
         st.write(f"💰 Total Pool: **{total}**")
 
         # -----------------------
-        # MATHEMATICAL MODEL
+        # MODEL
         # -----------------------
         if len(members) > 0:
 
             members_array = np.array(members)
 
-            # MODEL
             weights = model.compute_weights(len(members_array))
             probs = model.compute_probabilities(weights)
 
-            # -----------------------
-            # PROBABILITIES
-            # -----------------------
             st.subheader("📈 Probabilities")
 
             prob_df = pd.DataFrame({
@@ -196,26 +184,14 @@ if st.session_state["user"]:
             st.dataframe(prob_df)
             st.bar_chart(prob_df.set_index("Member"))
 
-            # -----------------------
-            # EXPECTED REWARD
-            # -----------------------
             st.subheader("💰 Expected Rewards")
-
             exp_rewards = model.expected_rewards(probs, total)
-
             st.write(dict(zip(members_array, exp_rewards)))
 
-            # -----------------------
-            # FAIRNESS
-            # -----------------------
             st.subheader("⚖️ Fairness")
-
             fairness = model.fairness_metric(probs)
             st.write(fairness)
 
-            # -----------------------
-            # DRAW WINNER
-            # -----------------------
             if st.button("🎲 Run Draw"):
                 winner = model.run_draw(members_array, probs)
                 st.success(f"🏆 Winner: {winner}")
@@ -232,9 +208,9 @@ if st.session_state["user"]:
         st.subheader("🛠️ Admin Panel")
         admin.admin_panel()
 
-    # =======================
+    # -----------------------
     # LOGOUT
-    # =======================
+    # -----------------------
     if st.sidebar.button("Logout"):
         st.session_state["user"] = None
         st.rerun()
