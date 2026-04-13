@@ -1,24 +1,24 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import sqlite3
 
-# IMPORT MODULES
+# MODULES
 import auth
+import group
 import payment
 import model
 import admin
-import group
 
 # -----------------------
-# INIT DATABASE
+# INIT SYSTEM
 # -----------------------
 auth.create_users_table()
-payment.create_contribution_table()
+auth.create_default_admin()
 group.create_group_tables()
+payment.create_contribution_table()
 
 # -----------------------
-# SESSION INIT
+# SESSION STATE
 # -----------------------
 if "user" not in st.session_state:
     st.session_state["user"] = None
@@ -33,19 +33,17 @@ choice = st.sidebar.selectbox("Menu", menu)
 # REGISTER
 # -----------------------
 if choice == "Register":
-    st.subheader("📝 Create Account")
+    st.subheader("📝 Register")
 
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
-    if st.button("Register"):
-        if username and password:
-            if auth.register_user(username, password):
-                st.success("✅ Account created")
-            else:
-                st.error("❌ Username already exists")
+    if st.button("Create Account"):
+        success, msg = auth.register_user(username, password)
+        if success:
+            st.success(msg)
         else:
-            st.warning("⚠️ Fill all fields")
+            st.error(msg)
 
 # -----------------------
 # LOGIN
@@ -73,8 +71,6 @@ if st.session_state["user"]:
     st.title("📊 Equb Smart System")
     st.write(f"👤 Logged in as: **{user}**")
 
-    conn = sqlite3.connect("equb.db", check_same_thread=False)
-
     # =======================
     # GROUP MANAGEMENT
     # =======================
@@ -83,35 +79,43 @@ if st.session_state["user"]:
     new_group = st.sidebar.text_input("New Group Name")
 
     if st.sidebar.button("Create Group"):
-        if new_group:
-            group.create_group(new_group, user)
-            st.sidebar.success("Group created")
+        success, msg = group.create_group(new_group, user)
+        if success:
+            st.sidebar.success(msg)
         else:
-            st.sidebar.warning("Enter group name")
+            st.sidebar.warning(msg)
 
     all_groups = group.get_groups()
 
-    selected_group = None
     group_id = None
 
     if all_groups:
-        group_dict = {f"{g[1]} (ID {g[0]})": g[0] for g in all_groups}
-        selected_group = st.sidebar.selectbox("Select Group", list(group_dict.keys()))
+        group_dict = {
+            f"{g[1]} (ID {g[0]})": g[0] for g in all_groups
+        }
+
+        selected_group = st.sidebar.selectbox(
+            "Select Group", list(group_dict.keys())
+        )
+
         group_id = group_dict[selected_group]
 
         if st.sidebar.button("Join Group"):
-            group.join_group(group_id, user)
-            st.sidebar.success("Joined group")
+            success, msg = group.join_group(group_id, user)
+            if success:
+                st.sidebar.success(msg)
+            else:
+                st.sidebar.warning(msg)
 
     # =======================
-    # MAIN GROUP DASHBOARD
+    # GROUP DASHBOARD
     # =======================
     if group_id:
 
         st.header(f"🏦 {selected_group}")
 
         # -----------------------
-        # GROUP MEMBERS
+        # MEMBERS
         # -----------------------
         members = group.get_group_members(group_id)
 
@@ -126,11 +130,11 @@ if st.session_state["user"]:
         amount = st.number_input("Enter Amount", min_value=0.0)
 
         if st.button("Pay"):
-            if amount > 0:
-                payment.save_payment(user, group_id, amount)
-                st.success("Payment recorded")
+            success, msg = payment.save_payment(user, group_id, amount)
+            if success:
+                st.success(msg)
             else:
-                st.warning("Enter valid amount")
+                st.warning(msg)
 
         # -----------------------
         # LOAD DATA
@@ -143,7 +147,17 @@ if st.session_state["user"]:
         )
 
         st.subheader("📋 Contributions")
-        st.dataframe(df)
+
+        if df.empty:
+            st.info("No contributions yet")
+        else:
+            st.dataframe(df)
+
+        # -----------------------
+        # TOTAL
+        # -----------------------
+        total = payment.get_group_total(group_id)
+        st.write(f"💰 Total Pool: **{total}**")
 
         # -----------------------
         # MATHEMATICAL MODEL
@@ -154,8 +168,6 @@ if st.session_state["user"]:
 
             weights = model.compute_weights(len(members_array))
             probs = model.compute_probabilities(weights)
-
-            total = df["Amount"].sum() if not df.empty else 0
 
             # -----------------------
             # PROBABILITIES
@@ -182,7 +194,9 @@ if st.session_state["user"]:
             # FAIRNESS
             # -----------------------
             st.subheader("⚖️ Fairness")
-            st.write(model.fairness_metric(probs))
+
+            fairness = model.fairness_metric(probs)
+            st.write(fairness)
 
             # -----------------------
             # DRAW
@@ -192,7 +206,7 @@ if st.session_state["user"]:
                 st.success(f"🏆 Winner: {winner}")
 
     else:
-        st.info("👈 Create or select a group to start")
+        st.info("👈 Create or select a group")
 
     # =======================
     # ADMIN PANEL
