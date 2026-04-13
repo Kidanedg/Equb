@@ -8,12 +8,14 @@ import auth
 import payment
 import model
 import admin
+import group
 
 # -----------------------
 # INIT DATABASE
 # -----------------------
 auth.create_users_table()
 payment.create_contribution_table()
+group.create_group_tables()
 
 # -----------------------
 # SESSION INIT
@@ -38,9 +40,8 @@ if choice == "Register":
 
     if st.button("Register"):
         if username and password:
-            success = auth.register_user(username, password)
-            if success:
-                st.success("✅ Account created successfully")
+            if auth.register_user(username, password):
+                st.success("✅ Account created")
             else:
                 st.error("❌ Username already exists")
         else:
@@ -63,104 +64,148 @@ elif choice == "Login":
             st.error("Invalid credentials")
 
 # -----------------------
-# MAIN DASHBOARD
+# MAIN APP
 # -----------------------
 if st.session_state["user"]:
 
     user = st.session_state["user"]
 
-    st.title("📊 Equb Smart Dashboard")
+    st.title("📊 Equb Smart System")
     st.write(f"👤 Logged in as: **{user}**")
 
-    # -----------------------
-    # DATABASE CONNECTION
-    # -----------------------
     conn = sqlite3.connect("equb.db", check_same_thread=False)
 
-    # -----------------------
-    # SHOW USERS
-    # -----------------------
-    st.subheader("👥 Registered Users")
-    users = auth.get_all_users()
-    st.write(users)
+    # =======================
+    # GROUP MANAGEMENT
+    # =======================
+    st.sidebar.subheader("🏦 Equb Groups")
 
-    # -----------------------
-    # CONTRIBUTION
-    # -----------------------
-    st.subheader("💳 Contribution")
+    new_group = st.sidebar.text_input("New Group Name")
 
-    amount = st.number_input("Enter Amount", min_value=0.0)
-
-    if st.button("Pay"):
-        if amount > 0:
-            payment.save_payment(user, amount)
-            st.success("✅ Payment successful")
+    if st.sidebar.button("Create Group"):
+        if new_group:
+            group.create_group(new_group, user)
+            st.sidebar.success("Group created")
         else:
-            st.warning("⚠️ Enter valid amount")
+            st.sidebar.warning("Enter group name")
 
-    # -----------------------
-    # LOAD CONTRIBUTIONS
-    # -----------------------
-    df = pd.DataFrame(payment.get_all_payments(),
-                      columns=["User", "Amount", "Status", "Time"])
+    all_groups = group.get_groups()
 
-    st.subheader("📋 Contributions")
-    st.dataframe(df)
+    selected_group = None
+    group_id = None
 
-    # -----------------------
-    # MATHEMATICAL MODEL
-    # -----------------------
-    if len(users) > 0:
+    if all_groups:
+        group_dict = {f"{g[1]} (ID {g[0]})": g[0] for g in all_groups}
+        selected_group = st.sidebar.selectbox("Select Group", list(group_dict.keys()))
+        group_id = group_dict[selected_group]
 
-        members = np.array(users)
-        weights = model.compute_weights(len(members))
-        probs = model.compute_probabilities(weights)
+        if st.sidebar.button("Join Group"):
+            group.join_group(group_id, user)
+            st.sidebar.success("Joined group")
 
-        total = df["Amount"].sum() if not df.empty else 0
+    # =======================
+    # MAIN GROUP DASHBOARD
+    # =======================
+    if group_id:
 
-        st.subheader("📈 Probabilities")
-
-        prob_df = pd.DataFrame({
-            "Member": members,
-            "Probability": probs
-        })
-
-        st.dataframe(prob_df)
-        st.bar_chart(prob_df.set_index("Member"))
+        st.header(f"🏦 {selected_group}")
 
         # -----------------------
-        # EXPECTED REWARD
+        # GROUP MEMBERS
         # -----------------------
-        st.subheader("💰 Expected Rewards")
+        members = group.get_group_members(group_id)
 
-        exp = model.expected_rewards(probs, total)
-        st.write(dict(zip(members, exp)))
-
-        # -----------------------
-        # FAIRNESS
-        # -----------------------
-        st.subheader("⚖️ Fairness (Variance)")
-        st.write(model.fairness_metric(probs))
+        st.subheader("👥 Members")
+        st.write(members)
 
         # -----------------------
-        # DRAW
+        # CONTRIBUTION
         # -----------------------
-        if st.button("🎲 Run Draw"):
-            winner = model.run_draw(members, probs)
-            st.success(f"🏆 Winner: {winner}")
+        st.subheader("💳 Contribution")
 
-    # -----------------------
+        amount = st.number_input("Enter Amount", min_value=0.0)
+
+        if st.button("Pay"):
+            if amount > 0:
+                payment.save_payment(user, group_id, amount)
+                st.success("Payment recorded")
+            else:
+                st.warning("Enter valid amount")
+
+        # -----------------------
+        # LOAD DATA
+        # -----------------------
+        data = payment.get_group_payments(group_id)
+
+        df = pd.DataFrame(
+            data,
+            columns=["User", "Group", "Amount", "Status", "Time"]
+        )
+
+        st.subheader("📋 Contributions")
+        st.dataframe(df)
+
+        # -----------------------
+        # MATHEMATICAL MODEL
+        # -----------------------
+        if len(members) > 0:
+
+            members_array = np.array(members)
+
+            weights = model.compute_weights(len(members_array))
+            probs = model.compute_probabilities(weights)
+
+            total = df["Amount"].sum() if not df.empty else 0
+
+            # -----------------------
+            # PROBABILITIES
+            # -----------------------
+            st.subheader("📈 Probabilities")
+
+            prob_df = pd.DataFrame({
+                "Member": members_array,
+                "Probability": probs
+            })
+
+            st.dataframe(prob_df)
+            st.bar_chart(prob_df.set_index("Member"))
+
+            # -----------------------
+            # EXPECTED REWARD
+            # -----------------------
+            st.subheader("💰 Expected Rewards")
+
+            exp = model.expected_rewards(probs, total)
+            st.write(dict(zip(members_array, exp)))
+
+            # -----------------------
+            # FAIRNESS
+            # -----------------------
+            st.subheader("⚖️ Fairness")
+            st.write(model.fairness_metric(probs))
+
+            # -----------------------
+            # DRAW
+            # -----------------------
+            if st.button("🎲 Run Draw"):
+                winner = model.run_draw(members_array, probs)
+                st.success(f"🏆 Winner: {winner}")
+
+    else:
+        st.info("👈 Create or select a group to start")
+
+    # =======================
     # ADMIN PANEL
-    # -----------------------
+    # =======================
     role = auth.get_user_role(user)
 
     if role == "admin":
         st.subheader("🛠️ Admin Panel")
         admin.admin_panel()
 
-    # -----------------------
+    # =======================
     # LOGOUT
-    # -----------------------
+    # =======================
     if st.sidebar.button("Logout"):
         st.session_state["user"] = None
         st.rerun()
