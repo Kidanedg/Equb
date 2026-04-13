@@ -102,6 +102,7 @@ if st.session_state["user"]:
     all_groups = group.get_groups()
 
     group_id = None
+    selected_group = None
 
     if all_groups:
         group_dict = {
@@ -124,7 +125,12 @@ if st.session_state["user"]:
         members = group.get_group_members(group_id)
 
         st.subheader("👥 Members")
-        st.write(members)
+
+        if members:
+            st.write(members)
+        else:
+            st.warning("No members yet")
+
         st.write(f"Total Members: {len(members)}")
 
         # -----------------------
@@ -135,16 +141,24 @@ if st.session_state["user"]:
         amount = st.number_input("Enter Amount", min_value=0.0)
 
         if st.button("Pay"):
-            success, msg = payment.save_payment(user, group_id, amount)
-            if success:
-                st.success(msg)
+
+            # 🔒 CHECK MEMBERSHIP
+            if user not in members:
+                st.error("❌ You are not a member of this group")
             else:
-                st.warning(msg)
+                success, msg = payment.save_payment(user, group_id, amount)
+                if success:
+                    st.success(msg)
+                else:
+                    st.warning(msg)
 
         # -----------------------
-        # DATA
+        # LOAD DATA (SAFE)
         # -----------------------
-        data = payment.get_group_payments(group_id)
+        try:
+            data = payment.get_group_payments(group_id)
+        except Exception:
+            data = []
 
         df = pd.DataFrame(
             data,
@@ -159,9 +173,13 @@ if st.session_state["user"]:
             st.dataframe(df)
 
         # -----------------------
-        # TOTAL
+        # TOTAL POOL
         # -----------------------
-        total = payment.get_group_total(group_id)
+        try:
+            total = payment.get_group_total(group_id)
+        except Exception:
+            total = 0
+
         st.write(f"💰 Total Pool: **{total}**")
 
         # -----------------------
@@ -184,14 +202,26 @@ if st.session_state["user"]:
             st.dataframe(prob_df)
             st.bar_chart(prob_df.set_index("Member"))
 
+            # -----------------------
+            # EXPECTED REWARD
+            # -----------------------
             st.subheader("💰 Expected Rewards")
+
             exp_rewards = model.expected_rewards(probs, total)
+
             st.write(dict(zip(members_array, exp_rewards)))
 
+            # -----------------------
+            # FAIRNESS
+            # -----------------------
             st.subheader("⚖️ Fairness")
+
             fairness = model.fairness_metric(probs)
             st.write(fairness)
 
+            # -----------------------
+            # DRAW
+            # -----------------------
             if st.button("🎲 Run Draw"):
                 winner = model.run_draw(members_array, probs)
                 st.success(f"🏆 Winner: {winner}")
