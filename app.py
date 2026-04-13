@@ -5,7 +5,6 @@ import numpy as np
 import auth
 import group
 import payment
-import model
 import admin
 
 # INIT
@@ -48,14 +47,14 @@ elif choice == "Login":
             st.error("Invalid")
 
 # -----------------------
-# MAIN
+# MAIN APP
 # -----------------------
 if st.session_state["user"]:
 
     user = st.session_state["user"]
 
-    st.title("Equb Smart System")
-    st.write(f"User: {user}")
+    st.title("📊 Equb Smart System")
+    st.write(f"👤 Logged in as: {user}")
 
     # -----------------------
     # CREATE GROUP
@@ -72,7 +71,7 @@ if st.session_state["user"]:
         st.rerun()
 
     # -----------------------
-    # GROUP ACCESS
+    # LOAD USER GROUPS ONLY
     # -----------------------
     user_groups = group.get_user_groups(user)
 
@@ -86,11 +85,14 @@ if st.session_state["user"]:
 
     st.header(selected)
 
+    # -----------------------
+    # MEMBERS
+    # -----------------------
     members = group.get_group_members(gid)
-    st.write("Members:", members)
+    st.write("👥 Members:", members)
 
     # -----------------------
-    # CYCLE INFO
+    # CYCLE
     # -----------------------
     cycle = group.get_cycle(gid)
     st.subheader(f"🔄 Cycle: {cycle}")
@@ -104,20 +106,17 @@ if st.session_state["user"]:
     amount = st.number_input("Amount", min_value=0.0)
 
     if st.button("Pay"):
-        if user not in members:
-            st.error("Not member")
-        else:
-            success, msg = payment.save_payment(user, gid, amount)
-            st.success(msg) if success else st.error(msg)
+        success, msg = payment.save_payment(user, gid, amount)
+        st.success(msg) if success else st.error(msg)
 
     # -----------------------
     # TOTAL
     # -----------------------
     total = payment.get_group_total(gid)
-    st.write("Total:", total)
+    st.write(f"💰 Total Pool: {total}")
 
     # -----------------------
-    # DRAW (NO REPEAT WINNER)
+    # DRAW
     # -----------------------
     if eligible:
 
@@ -128,22 +127,26 @@ if st.session_state["user"]:
 
             group.save_winner(gid, winner)
 
-            st.success(f"Winner: {winner}")
+            st.success(f"🏆 Winner: {winner}")
 
-            # Check cycle reset
             if group.check_cycle_reset(gid):
                 st.info("🔁 New cycle started!")
 
             st.rerun()
 
     else:
-        st.warning("All members already received → Resetting cycle soon")
+        st.warning("All members received → resetting soon")
 
     # -----------------------
-    # DATA
+    # PAYMENTS DATA
     # -----------------------
     data = payment.get_group_payments(gid)
-    df = pd.DataFrame(data, columns=["User", "Group", "Amount", "Status", "Time"])
+
+    df = pd.DataFrame(
+        data,
+        columns=["User", "Group", "Amount", "Status", "Time"]
+    )
+
     st.dataframe(df)
 
     # -----------------------
